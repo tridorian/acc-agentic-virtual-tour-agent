@@ -97,7 +97,7 @@ async def get_agent_config():
         "model": os.getenv("DEMO_AGENT_MODEL", "gemini-live-2.5-flash-native-audio"),
         "tts_service": "Google Vertex AI Text-to-Speech (via gemini-live native-audio)",
         "voice_info": "The agent uses Gemini's native audio voice, which is Google's premium neural voice synthesized via Vertex AI",
-        "recommendation": "To match the agent voice exactly, use Google Cloud Text-to-Speech API with voice-id 'kore' or the corresponding premium neural voice",
+        "recommendation": "To match the agent voice exactly, use Google Cloud Text-to-Speech API with voice-id 'Kore' or the corresponding premium neural voice",
         "note": "The exact voice parameters are handled by the Gemini Live API and not directly configurable"
     }
 
@@ -119,7 +119,7 @@ def _corpus_path() -> str:
 # Text-to-Speech helper and endpoint
 # ---------------------------------------------------------------------------
 
-def _synthesize_text_to_mp3(text: str, voice_name: str = "kore", language_code: str = "en-US") -> bytes:
+def _synthesize_text_to_mp3(text: str, voice_name: str = "Kore", language_code: str = "en-US") -> bytes:
     """Helper that calls Google Cloud TTS and returns MP3 bytes."""
     client = texttospeech.TextToSpeechClient()
     synthesis_input = texttospeech.SynthesisInput(text=text)
@@ -146,7 +146,7 @@ async def synthesize_speech(body: dict = Body(...)):
     text = body.get("text", "")
     if not text:
         return {"error": "text field is required"}
-    voice_name = body.get("voice_name", "kore")
+    voice_name = body.get("voice_name", "Kore")
     language_code = body.get("language_code", "en-US")
     try:
         mp3_bytes = _synthesize_text_to_mp3(text, voice_name=voice_name, language_code=language_code)

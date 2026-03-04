@@ -212,7 +212,8 @@ const COUNTRY_CODES = [
 let userInfo = null;
 
 // Text-to-speech function
-function speakMessage(text) {
+function speakMessage(text, options = {}) {
+  const voiceName = options.voiceName || "Kore";
   // Cancel any ongoing speech
   window.speechSynthesis.cancel();
   
@@ -230,10 +231,17 @@ function speakMessage(text) {
     // Look for Google voices first, then female voices, then general voices
     let selectedVoice = null;
     
+    // Priority 0: Use Kore if available in browser voices
+    selectedVoice = voices.find(voice =>
+      voice.name.toLowerCase().includes(voiceName.toLowerCase())
+    );
+
     // Priority 1: Google Cloud Text-to-Speech voices (if available)
+    if (!selectedVoice) {
     selectedVoice = voices.find(voice => 
       voice.name.includes('Google') && voice.name.toLowerCase().includes('female')
     );
+    }
     
     // Priority 2: Look for any female voice with "neural" or "natural" quality
     if (!selectedVoice) {
@@ -265,7 +273,7 @@ function speakMessage(text) {
   fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_name: "kore" })
+    body: JSON.stringify({ text, voice_name: voiceName })
   })
     .then(res => res.json())
     .then(data => {
@@ -443,20 +451,14 @@ if (userInfoForm) {
     
     // Hide the modal
     userInfoModal.classList.add("hidden");
+
+    // Initialize speaker output from this user gesture so agent audio can autoplay.
+    ensureAudioOutputStarted().catch((error) => {
+      console.warn("Failed to initialize audio output on submit:", error);
+    });
     
     // Connect WebSocket and start the agent
     connectWebsocket();
-    
-    // Add a welcome message from the agent (STELLA introduction)
-    setTimeout(() => {
-      const welcomeMessage = `Hi ${userInfo.fullName}, I am STELLA, your personal assistant at Star Learners! 👋  I'm here to walk you through our centre facilities and support you with any information you need. Are you ready to begin?`;
-      const agentBubble = createMessageBubble(welcomeMessage, false, false);
-      messagesDiv.appendChild(agentBubble);
-      scrollToBottom();
-      
-      // Make STELLA speak the welcome message
-      speakMessage(welcomeMessage);
-    }, 500);
   });
 }
 
@@ -469,6 +471,23 @@ const userId = "demo-user";
 const sessionId = "demo-session-" + Math.random().toString(36).substring(7);
 let websocket = null;
 let is_audio = false;
+let hasRequestedAgentWelcome = false;
+
+async function requestAgentWelcome() {
+  if (hasRequestedAgentWelcome || !userInfo || !websocket || websocket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  // Ensure audio output is initialized so the first spoken turn is audible.
+  await ensureAudioOutputStarted().catch((error) => {
+    console.warn("Audio output not ready for welcome message:", error);
+  });
+
+  const welcomeMessage = `Hi ${userInfo.fullName}, I am STELLA, your personal assistant at Star Learners! 👋  I'm here to walk you through our centre facilities and support you with any information you need. Are you ready to begin?`;
+  const bootstrapPrompt = `Say this greeting exactly in one response, without adding extra text: "${welcomeMessage}"`;
+  sendMessage(bootstrapPrompt, { isInternal: true });
+  hasRequestedAgentWelcome = true;
+}
 
 // Get checkbox elements for RunConfig options
 const enableProactivityCheckbox = document.getElementById("enableProactivity");
@@ -516,6 +535,7 @@ function getWebSocketUrl() {
 const messageForm = document.getElementById("messageForm");
 const messageInput = document.getElementById("message");
 const messagesDiv = document.getElementById("messages");
+const sendButton = document.getElementById("sendButton");
 // upload form elements
 const uploadForm = document.getElementById("uploadForm");
 const uploadUrlInput = document.getElementById("uploadUrl");
@@ -673,10 +693,19 @@ function updateConnectionStatus(connected) {
 }
 
 // Create a message bubble element
+function createProfileIcon(isUser) {
+  const avatarDiv = document.createElement("div");
+  avatarDiv.className = `message-avatar ${isUser ? "user" : "agent"}`;
+  avatarDiv.textContent = isUser ? "U" : "S";
+  avatarDiv.setAttribute("aria-hidden", "true");
+  return avatarDiv;
+}
+
 function createMessageBubble(text, isUser, isPartial = false) {
   const messageDiv = document.createElement("div");
   messageDiv.className = `message ${isUser ? "user" : "agent"}`;
 
+  const avatarDiv = createProfileIcon(isUser);
   const bubbleDiv = document.createElement("div");
   bubbleDiv.className = "bubble";
 
@@ -692,7 +721,13 @@ function createMessageBubble(text, isUser, isPartial = false) {
   }
 
   bubbleDiv.appendChild(textP);
-  messageDiv.appendChild(bubbleDiv);
+  if (isUser) {
+    messageDiv.appendChild(bubbleDiv);
+    messageDiv.appendChild(avatarDiv);
+  } else {
+    messageDiv.appendChild(avatarDiv);
+    messageDiv.appendChild(bubbleDiv);
+  }
 
   return messageDiv;
 }
@@ -702,6 +737,7 @@ function createImageBubble(imageDataUrl, isUser) {
   const messageDiv = document.createElement("div");
   messageDiv.className = `message ${isUser ? "user" : "agent"}`;
 
+  const avatarDiv = createProfileIcon(isUser);
   const bubbleDiv = document.createElement("div");
   bubbleDiv.className = "bubble image-bubble";
 
@@ -711,7 +747,13 @@ function createImageBubble(imageDataUrl, isUser) {
   img.alt = "Captured image";
 
   bubbleDiv.appendChild(img);
-  messageDiv.appendChild(bubbleDiv);
+  if (isUser) {
+    messageDiv.appendChild(bubbleDiv);
+    messageDiv.appendChild(avatarDiv);
+  } else {
+    messageDiv.appendChild(avatarDiv);
+    messageDiv.appendChild(bubbleDiv);
+  }
 
   return messageDiv;
 }
@@ -795,9 +837,12 @@ function connectWebsocket() {
       url: ws_url
     }, '🔌', 'system');
 
-    // Enable the Send button
-    document.getElementById("sendButton").disabled = false;
+    // Enable text-send button if text mode UI exists.
+    if (sendButton) {
+      sendButton.disabled = false;
+    }
     addSubmitHandler();
+    requestAgentWelcome();
   };
 
   // Handle incoming messages
@@ -1170,7 +1215,9 @@ function connectWebsocket() {
   websocket.onclose = function () {
     console.log("WebSocket connection closed.");
     updateConnectionStatus(false);
-    document.getElementById("sendButton").disabled = true;
+    if (sendButton) {
+      sendButton.disabled = true;
+    }
     addSystemMessage("Connection closed. Reconnecting in 5 seconds...");
 
     // Log to console
@@ -1243,6 +1290,10 @@ if (uploadForm) {
 
 // Add submit handler to the form
 function addSubmitHandler() {
+  if (!messageForm || !messageInput) {
+    return;
+  }
+
   messageForm.onsubmit = function (e) {
     e.preventDefault();
     const message = messageInput.value.trim();
@@ -1264,8 +1315,9 @@ function addSubmitHandler() {
 }
 
 // Send a message to the server as JSON
-function sendMessage(message) {
+function sendMessage(message, options = {}) {
   if (websocket && websocket.readyState == WebSocket.OPEN) {
+    const isInternal = options.isInternal === true;
     const jsonMessage = JSON.stringify({
       type: "text",
       text: message
@@ -1273,7 +1325,13 @@ function sendMessage(message) {
     websocket.send(jsonMessage);
 
     // Log to console panel
-    addConsoleEntry('outgoing', 'User Message: ' + message, null, '💬', 'user');
+    addConsoleEntry(
+      'outgoing',
+      (isInternal ? 'Internal Prompt: ' : 'User Message: ') + message,
+      null,
+      isInternal ? '🤖' : '💬',
+      isInternal ? 'system' : 'user'
+    );
   }
 }
 
@@ -1460,26 +1518,76 @@ let audioPlayerContext;
 let audioRecorderNode;
 let audioRecorderContext;
 let micStream;
+let audioOutputInitPromise = null;
+let audioInputInitPromise = null;
 
 // Import the audio worklets
 import { startAudioPlayerWorklet } from "./audio-player.js";
 import { startAudioRecorderWorklet } from "./audio-recorder.js";
 
-// Start audio
-function startAudio() {
-  // Start audio output
-  startAudioPlayerWorklet().then(([node, ctx]) => {
-    audioPlayerNode = node;
-    audioPlayerContext = ctx;
-  });
-  // Start audio input
-  startAudioRecorderWorklet(audioRecorderHandler).then(
-    ([node, ctx, stream]) => {
-      audioRecorderNode = node;
-      audioRecorderContext = ctx;
-      micStream = stream;
+async function ensureAudioOutputStarted() {
+  if (audioPlayerNode && audioPlayerContext) {
+    if (audioPlayerContext.state === "suspended") {
+      await audioPlayerContext.resume();
     }
-  );
+    return;
+  }
+
+  if (!audioOutputInitPromise) {
+    audioOutputInitPromise = startAudioPlayerWorklet()
+      .then(async ([node, ctx]) => {
+        audioPlayerNode = node;
+        audioPlayerContext = ctx;
+        if (audioPlayerContext.state === "suspended") {
+          await audioPlayerContext.resume();
+        }
+      })
+      .catch((error) => {
+        audioOutputInitPromise = null;
+        throw error;
+      });
+  }
+
+  await audioOutputInitPromise;
+}
+
+async function ensureAudioInputStarted() {
+  if (audioRecorderNode && audioRecorderContext && micStream) {
+    if (audioRecorderContext.state === "suspended") {
+      await audioRecorderContext.resume();
+    }
+    return;
+  }
+
+  if (!audioInputInitPromise) {
+    audioInputInitPromise = startAudioRecorderWorklet(audioRecorderHandler)
+      .then(async ([node, ctx, stream]) => {
+        audioRecorderNode = node;
+        audioRecorderContext = ctx;
+        micStream = stream;
+        if (audioRecorderContext.state === "suspended") {
+          await audioRecorderContext.resume();
+        }
+      })
+      .catch((error) => {
+        audioInputInitPromise = null;
+        throw error;
+      });
+  }
+
+  await audioInputInitPromise;
+}
+
+// Start full audio mode (output + microphone)
+function startAudio() {
+  ensureAudioOutputStarted().catch((error) => {
+    console.error("Failed to start audio output:", error);
+    addSystemMessage("Failed to start audio output");
+  });
+  ensureAudioInputStarted().catch((error) => {
+    console.error("Failed to start microphone:", error);
+    addSystemMessage("Failed to start microphone");
+  });
 }
 
 // Start the audio only when the user clicked the button
@@ -1509,4 +1617,3 @@ function audioRecorderHandler(pcmData) {
     // addConsoleEntry('outgoing', `Audio chunk: ${pcmData.byteLength} bytes`);
   }
 }
-
