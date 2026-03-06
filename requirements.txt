@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+pydantic
+google-adk
+google-genai
+google-cloud-aiplatform
+google-cloud-texttospeech
