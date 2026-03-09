@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ADK Gemini Live API Toolkit Demo</title>
+    <title>Star Learners AI</title>
     <link rel="icon" type="image/jpeg" href="https://scontent.fkul8-4.fna.fbcdn.net/v/t39.30808-6/409800028_768338051973763_4459650912449556577_n.jpg?_nc_cat=100&ccb=1-7&_nc_sid=1d70fc&_nc_ohc=hKl1gkCFTEgQ7kNvwFsvSc8&_nc_oc=Adn0w4eddRC6_piLZQKZuZQW3vEO4pO9v9HhxipBuFATDHzyalLq6j6W9w5Ok5u_SDf5Qzaw5TRPBSN_DptGAnyJ&_nc_zt=23&_nc_ht=scontent.fkul8-4.fna&_nc_gid=raQhUqA4zn6Mwq-6Qhp6Bg&_nc_ss=8&oh=00_AfwvmNpG-rHvMLEFgLogaHNLKc0d5dKhxou-_GWqM4iZxg&oe=69AD0176">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Readex+Pro:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/js/app.js" type="module"></script>
   </head>
@@ -53,21 +56,9 @@
     </div>
 
     <header>
-      <h1>ADK Gemini Live API Toolkit Demo</h1>
-      <div class="subtitle">Real-time bidirectional streaming with Google ADK</div>
-      <div class="header-options">
-        <label class="header-checkbox" title="Enable model to proactively respond without explicit prompts (Native audio models only)">
-          <input type="checkbox" id="enableProactivity">
-          <span>Proactivity</span>
-        </label>
-        <label class="header-checkbox" title="Enable model to detect and adapt to emotional cues (Native audio models only)">
-          <input type="checkbox" id="enableAffectiveDialog">
-          <span>Affective Dialog</span>
-        </label>
-      </div>
-      <!-- link to the separate knowledge-base management page -->
+      <h1>Star Learners AI</h1>
+      <div class="subtitle">Your guide to Star Learners — ask Stella anything</div>
       <div class="header-manage">
-        <a href="/static/kb.html" class="manage-link">Manage Knowledge Base</a>
         <button type="button" id="openConsoleButton" class="manage-link console-toggle-btn">Event Console</button>
       </div>
       <div class="connection-status">
@@ -88,8 +79,29 @@
 
         <div class="input-container">
           <div class="input-wrapper">
-            <button type="button" id="startAudioButton">Start Interacting</button>
-            <button type="button" id="endConversationButton" disabled>End Conversation</button>
+            <!-- Shown before session starts -->
+            <button type="button" id="startSessionButton" class="btn-start-session">Start Chat with Stella</button>
+            <!-- Shown after session starts -->
+            <div id="chatInputRow" class="chat-input-row hidden">
+              <div class="text-input-wrapper">
+                <div class="input-mode-bar">
+                  <textarea
+                    id="textInput"
+                    class="text-input"
+                    placeholder="Ask anything"
+                    rows="1"
+                    maxlength="1000"
+                  ></textarea>
+                  <button type="button" id="startAudioButton" class="voice-pill-btn" title="Toggle full voice mode" aria-pressed="false">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" aria-hidden="true">
+                      <path d="M6.5 7a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1zm5-3a1 1 0 0 1 1 1v14a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1zm5 4a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0V9a1 1 0 0 1 1-1z"/>
+                    </svg>
+                    <span>Voice</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button type="button" id="endConversationButton" class="hidden" disabled>End Conversation</button>
           </div>
         </div>
       </div>
@@ -113,17 +125,38 @@
     <div id="endConversationModal" class="modal">
       <div class="modal-content end-summary-content">
         <div class="modal-header">
-          <h3>Conversation Summary</h3>
+          <h3>Thank You for Visiting!</h3>
           <button type="button" class="close-btn" id="closeEndConversationModal" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body end-summary-body">
-          <div class="summary-row"><strong>Session ID:</strong> <span id="summarySessionId">-</span></div>
-          <div class="summary-row"><strong>Name:</strong> <span id="summaryUserName">-</span></div>
-          <div class="summary-row"><strong>Email:</strong> <span id="summaryUserEmail">-</span></div>
-          <div class="summary-row"><strong>Duration:</strong> <span id="summaryDuration">00:00:00</span></div>
+          <div class="summary-row summary-row--inline"><strong>Name:</strong> <span id="summaryUserName">-</span></div>
+          <div class="summary-row summary-row--inline"><strong>Email:</strong> <span id="summaryUserEmail">-</span></div>
+          <div class="summary-row summary-row--inline"><strong>Duration:</strong> <span id="summaryDuration">00:00:00</span></div>
+          <div class="summary-row hidden"><strong>Session ID:</strong> <span id="summarySessionId">-</span></div>
+
+          <div class="summary-section">
+            <h4 class="summary-section-title">What You Explored</h4>
+            <ul class="summary-list" id="summaryInterestsList">
+              <li class="summary-empty">No specific topics recorded.</li>
+            </ul>
+          </div>
+
+          <div class="summary-section">
+            <h4 class="summary-section-title">Your Questions</h4>
+            <ul class="summary-list" id="summaryQuestionsList">
+              <li class="summary-empty">No questions recorded.</li>
+            </ul>
+          </div>
+
+          <p class="summary-cta-text">Want to learn more or schedule a visit? Our team is ready to help!</p>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn-primary" id="closeSummaryButton">Done</button>
+        <div class="modal-footer summary-footer">
+          <button type="button" class="btn-share" id="summaryShareButton">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+            Share via WhatsApp
+          </button>
+          <button type="button" class="btn-connect" id="summaryConnectButton">Connect with Our Team</button>
+          <button type="button" class="btn-secondary" id="closeSummaryButton">Done</button>
         </div>
       </div>
     </div>

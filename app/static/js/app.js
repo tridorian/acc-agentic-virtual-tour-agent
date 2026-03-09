@@ -213,118 +213,6 @@ let userInfo = null;
 let conversationStartedAt = null;
 let sessionEndedAt = null;
 
-// Text-to-speech function
-function speakMessage(text, options = {}) {
-  const voiceName = options.voiceName || "Kore";
-  // Cancel any ongoing speech
-  window.speechSynthesis.cancel();
-  
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.0; // Normal speed
-  utterance.pitch = 1.2; // Slightly higher pitch for STELLA persona
-  utterance.volume = 1.0; // Full volume
-  
-  // Get available voices
-  const voices = window.speechSynthesis.getVoices();
-  console.log("Available voices:", voices.map(v => ({ name: v.name, lang: v.lang })));
-  
-  if (voices.length > 0) {
-    // Try to find a voice that matches the agent's characteristics
-    // Look for Google voices first, then female voices, then general voices
-    let selectedVoice = null;
-    
-    // Priority 0: Use Kore if available in browser voices
-    selectedVoice = voices.find(voice =>
-      voice.name.toLowerCase().includes(voiceName.toLowerCase())
-    );
-
-    // Priority 1: Google Cloud Text-to-Speech voices (if available)
-    if (!selectedVoice) {
-    selectedVoice = voices.find(voice => 
-      voice.name.includes('Google') && voice.name.toLowerCase().includes('female')
-    );
-    }
-    
-    // Priority 2: Look for any female voice with "neural" or "natural" quality
-    if (!selectedVoice) {
-      selectedVoice = voices.find(voice => 
-        (voice.name.toLowerCase().includes('female') || voice.name.toLowerCase().includes('woman')) &&
-        (voice.name.toLowerCase().includes('neural') || voice.name.toLowerCase().includes('natural'))
-      );
-    }
-    
-    // Priority 3: Look for standard female voices
-    if (!selectedVoice) {
-      selectedVoice = voices.find(voice => 
-        voice.name.toLowerCase().includes('female') || voice.name.toLowerCase().includes('woman')
-      );
-    }
-    
-    // Priority 4: Use the first voice as fallback
-    if (!selectedVoice) {
-      selectedVoice = voices[0];
-    }
-    
-    console.log("Selected voice for STELLA:", selectedVoice.name, selectedVoice.lang);
-    utterance.voice = selectedVoice;
-  }
-  
-  // Speak the message
-  // Attempt to use server-generated audio (voice_name="Kore").
-  // This gives a closer match to the agent's own voice.
-  fetch("/api/tts", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_name: voiceName })
-  })
-    .then(res => res.json())
-    .then(data => {
-      if (data.audio) {
-        const byteString = atob(data.audio);
-        const ab = new ArrayBuffer(byteString.length);
-        const ia = new Uint8Array(ab);
-        for (let i = 0; i < byteString.length; i++) {
-          ia[i] = byteString.charCodeAt(i);
-        }
-        const blob = new Blob([ab], { type: data.mimeType || "audio/mp3" });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.play().catch(err => {
-          console.warn("Server TTS playback failed, falling back to browser voice", err);
-          window.speechSynthesis.speak(utterance);
-        });
-      } else {
-        console.warn("Server TTS error", data);
-        window.speechSynthesis.speak(utterance);
-      }
-    })
-    .catch(err => {
-      console.warn("TTS request failed", err);
-      window.speechSynthesis.speak(utterance);
-    });
-}
-
-// Fetch and log agent voice configuration for debugging
-async function logAgentVoiceConfig() {
-  try {
-    const response = await fetch("/api/agent-config");
-    const config = await response.json();
-    console.log("=== AGENT VOICE CONFIGURATION ===");
-    console.log("Agent Name:", config.agent_name);
-    console.log("Model:", config.model);
-    console.log("TTS Service:", config.tts_service);
-    console.log("Voice Info:", config.voice_info);
-    console.log("Recommendation:", config.recommendation);
-    console.log("Note:", config.note);
-  } catch (error) {
-    console.error("Failed to fetch agent config:", error);
-  }
-}
-
-// Call this when the page loads
-window.addEventListener('DOMContentLoaded', logAgentVoiceConfig);
-
 // Get user info modal and form elements
 const userInfoModal = document.getElementById("userInfoModal");
 const userInfoForm = document.getElementById("userInfoForm");
@@ -469,6 +357,7 @@ if (userInfoForm) {
     sessionEndedAt = null;
     isEndingConversation = false;
     hasEndedConversation = false;
+    conversationLog = [];
     
     // Hide the modal
     userInfoModal.classList.add("hidden");
@@ -480,7 +369,18 @@ if (userInfoForm) {
 
     // Connect WebSocket and start the agent
     connectWebsocket();
+
+    // Show chat input UI (text + mic + end conversation)
+    const startSessionButton = document.getElementById("startSessionButton");
+    if (startSessionButton) startSessionButton.classList.add("hidden");
+    const chatInputRow = document.getElementById("chatInputRow");
+    if (chatInputRow) chatInputRow.classList.remove("hidden");
+    if (startAudioButton) {
+      startAudioButton.disabled = false;
+    }
+    setInputMode("text", true);
     if (endConversationButton) {
+      endConversationButton.classList.remove("hidden");
       endConversationButton.disabled = false;
     }
   });
@@ -527,19 +427,25 @@ const enableAffectiveDialogCheckbox = document.getElementById("enableAffectiveDi
 // Reconnect WebSocket when RunConfig options change
 function handleRunConfigChange() {
   if (websocket && websocket.readyState === WebSocket.OPEN) {
+    const runConfigSettings = {
+      proactivity: !!enableProactivityCheckbox?.checked,
+      affective_dialog: !!enableAffectiveDialogCheckbox?.checked
+    };
+
     addSystemMessage("Reconnecting with updated settings...");
-    addConsoleEntry('outgoing', 'Reconnecting due to settings change', {
-      proactivity: enableProactivityCheckbox.checked,
-      affective_dialog: enableAffectiveDialogCheckbox.checked
-    }, '🔄', 'system');
+    addConsoleEntry('outgoing', 'Reconnecting due to settings change', runConfigSettings, '🔄', 'system');
     websocket.close();
     // connectWebsocket() will be called by onclose handler after delay
   }
 }
 
 // Add change listeners to RunConfig checkboxes
-enableProactivityCheckbox.addEventListener("change", handleRunConfigChange);
-enableAffectiveDialogCheckbox.addEventListener("change", handleRunConfigChange);
+if (enableProactivityCheckbox) {
+  enableProactivityCheckbox.addEventListener("change", handleRunConfigChange);
+}
+if (enableAffectiveDialogCheckbox) {
+  enableAffectiveDialogCheckbox.addEventListener("change", handleRunConfigChange);
+}
 
 // Build WebSocket URL with RunConfig options as query parameters
 function getWebSocketUrl() {
@@ -563,14 +469,7 @@ function getWebSocketUrl() {
 }
 
 // Get DOM elements
-const messageForm = document.getElementById("messageForm");
-const messageInput = document.getElementById("message");
 const messagesDiv = document.getElementById("messages");
-const sendButton = document.getElementById("sendButton");
-// upload form elements
-const uploadForm = document.getElementById("uploadForm");
-const uploadUrlInput = document.getElementById("uploadUrl");
-const uploadStatus = document.getElementById("uploadStatus");
 const statusIndicator = document.getElementById("statusIndicator");
 const statusText = document.getElementById("statusText");
 const consoleContent = document.getElementById("consoleContent");
@@ -593,9 +492,12 @@ const INTERRUPTION_UNLOCK_MS = 6000;
 const WAKE_REPLY_TEXT = "Yes, I'm here! What can I help you with?";
 const ENGLISH_ONLY_NOTICE = "Please use English only.";
 const DEFAULT_YOUTUBE_URL = "https://youtu.be/tkhpVEcBfv0";
+const QDRANT_VIDEO_SCORE_THRESHOLD = 0.05;
 const RESUME_VIDEO_HINT_TEXT = 'Video paused. Say "Please continue to play the video" to resume.';
 const REGISTRATION_URL = "https://starlearners.com.sg/admission/register-your-interest/";
 const REGISTRATION_PROMPT_TEXT = "Great! You can proceed with registration here to embark on a new journey with us:";
+const TEAM_CONNECT_URL = "https://starlearners.com.sg/contact-us/";
+const TEAM_WHATSAPP_NUMBER = "6562238808"; // Star Learners WhatsApp number (SG format, no +)
 const TOUR_END_QUESTION = "That's the end of the virtual tour! Do you have any questions or anything else you'd like to know?";
 // const VIRTUAL_TOUR_INTRO_TEXT = "Great to hear that! I'll take you on a virtual tour of our center. Feel free to explore and learn more about what we offer. If you have any questions along the way, just let me know 😊";
 const VIRTUAL_TOUR_INTRO_TEXT = "Great to hear that!😊";
@@ -628,6 +530,8 @@ let youtubeApiReadyPromise = null;
 let youtubeEndMonitorInterval = null;
 let keywordRecognizer = null;
 let keywordRecognizerActive = false;
+let pendingVirtualTourFallbackTimer = null;
+let conversationLog = []; // {role: 'user'|'agent', text: string}
 
 // Helper function to clean spaces between CJK characters
 // Removes spaces between Japanese/Chinese/Korean characters while preserving spaces around Latin text
@@ -662,9 +566,39 @@ function hasInterruptionKeyword(text) {
   return normalizeKeywordText(text).includes(INTERRUPTION_KEYWORD);
 }
 
+function normalizeUrlCandidate(url) {
+  return (url || "").trim().replace(/[)\],.;!?'"`]+$/g, "");
+}
+
+function parseYouTubeTimestamp(rawValue) {
+  if (!rawValue) {
+    return null;
+  }
+
+  const value = String(rawValue).trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+
+  if (/^\d+$/.test(value)) {
+    return parseInt(value, 10);
+  }
+
+  const match = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = parseInt(match[1] || "0", 10);
+  const minutes = parseInt(match[2] || "0", 10);
+  const seconds = parseInt(match[3] || "0", 10);
+  const total = (hours * 3600) + (minutes * 60) + seconds;
+  return total > 0 ? total : null;
+}
+
 function extractYouTubeVideoId(url) {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(normalizeUrlCandidate(url));
     const host = parsed.hostname.toLowerCase();
     if (host.includes("youtu.be")) {
       return parsed.pathname.replace("/", "").split("/")[0] || null;
@@ -686,7 +620,86 @@ function extractYouTubeVideoId(url) {
 
 function extractFirstYouTubeUrl(text) {
   const matches = (text || "").match(/https?:\/\/(?:www\.)?(?:youtube\.com\/\S+|youtu\.be\/\S+)/i);
-  return matches ? matches[0] : null;
+  return matches ? normalizeUrlCandidate(matches[0]) : null;
+}
+
+function extractTimestampFromYouTubeUrl(url) {
+  try {
+    const parsed = new URL(normalizeUrlCandidate(url));
+    const tParam = parsed.searchParams.get("t");
+    const startParam = parsed.searchParams.get("start");
+    return parseYouTubeTimestamp(tParam) ?? parseYouTubeTimestamp(startParam);
+  } catch (e) {
+    return null;
+  }
+}
+
+function seekYouTubeToTimestamp(timestampSec) {
+  const adjustedSec = Math.max(0, timestampSec - 2);
+
+  if (youtubePlayer && typeof youtubePlayer.seekTo === "function") {
+    youtubePlayer.seekTo(adjustedSec, true);
+    youtubePlayer.pauseVideo();
+    setTimeout(() => {
+      if (youtubePlayer && typeof youtubePlayer.playVideo === "function") {
+        youtubePlayer.playVideo();
+      }
+    }, 1000);
+  } else if (floatingVideoIframe && floatingVideoIframe.contentWindow) {
+    floatingVideoIframe.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: "seekTo", args: [adjustedSec, true] }),
+      "*"
+    );
+    floatingVideoIframe.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: "pauseVideo", args: [] }),
+      "*"
+    );
+    setTimeout(() => {
+      if (floatingVideoIframe && floatingVideoIframe.contentWindow) {
+        floatingVideoIframe.contentWindow.postMessage(
+          JSON.stringify({ event: "command", func: "playVideo", args: [] }),
+          "*"
+        );
+      }
+    }, 1000);
+  }
+  if (floatingVideoResumeHint) {
+    floatingVideoResumeHint.classList.add("hidden");
+  }
+}
+
+async function searchQdrantAndSeekVideo(query) {
+  try {
+    const response = await fetch("/api/qdrant-search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.error) return;
+
+    const videoResults = data.video_results || [];
+    const bestVideo = videoResults.find(
+      r => r.youtube_deeplink && r.score >= QDRANT_VIDEO_SCORE_THRESHOLD
+    );
+
+    if (!bestVideo) return;
+
+    const { video_id, timestamp_sec, timestamp_hms, youtube_deeplink } = bestVideo;
+    const currentVideoId = extractYouTubeVideoId(currentYouTubeWatchUrl);
+
+    if (currentVideoId === video_id && floatingVideoContainer) {
+      // Same video is playing — seek silently to the relevant timestamp
+      seekYouTubeToTimestamp(timestamp_sec);
+      currentYouTubeWatchUrl = youtube_deeplink;
+    } else {
+      // Different video or no video loaded yet — play from the timestamp
+      playYouTubeVideo(youtube_deeplink);
+    }
+  } catch (e) {
+    console.warn("Qdrant search failed:", e);
+  }
 }
 
 function isVideoFallbackReply(text) {
@@ -725,6 +738,65 @@ function isNoOrSatisfied(text) {
     || normalized.includes("im good")
     || normalized.includes("i am satisfied")
     || normalized.includes("satisfied");
+}
+
+function logConversationMessage(role, text) {
+  if (!text || !text.trim()) return;
+  conversationLog.push({ role, text: text.trim() });
+}
+
+function isUserQuestion(text) {
+  if (!text || text.length < 4) return false;
+  const t = text.toLowerCase().trim();
+  if (t.endsWith("?")) return true;
+  return /^(?:what|where|when|how|why|who|which|is |are |do |does |did |will |would |could |can |is there|are there|do you|does it|have you)\b/.test(t);
+}
+
+function extractTopicLabel(text) {
+  const cleaned = text.trim().replace(/[.!?]+$/, "");
+  const patterns = [
+    /^(?:i (?:want|would like|like|need) to (?:see|know|learn about|find out about|ask about|ask))(?: (?:about|more about))?(?: (?:the|a|an))?\s*(.*)/i,
+    /^(?:i (?:am|'m) (?:interested|curious)(?: in| about))?(?: (?:the|a|an))?\s*(.*)/i,
+    /^(?:can you (?:show|tell) me(?: (?:about|the|a|an))?)\s*(.*)/i,
+    /^(?:tell me (?:about|more about)(?: (?:the|a|an))?)\s*(.*)/i,
+    /^(?:show me(?: (?:the|a|an))?)\s*(.*)/i,
+    /^(?:(?:please )?(?:show|describe|explain)(?: (?:the|a|an))?)\s*(.*)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match && match[1] && match[1].trim().length > 2) {
+      const topic = match[1].trim();
+      return topic.charAt(0).toUpperCase() + topic.slice(1);
+    }
+  }
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function generateConversationSummary() {
+  const qaPairs = [];
+  const interests = [];
+  const seenTexts = new Set();
+
+  for (let i = 0; i < conversationLog.length; i++) {
+    const entry = conversationLog[i];
+    if (entry.role !== "user") continue;
+    const key = entry.text.toLowerCase();
+    if (seenTexts.has(key)) continue;
+    seenTexts.add(key);
+
+    if (isUserQuestion(entry.text)) {
+      // Find the closest agent reply after this user message
+      const nextAgent = conversationLog.slice(i + 1).find(e => e.role === "agent");
+      qaPairs.push({
+        question: entry.text,
+        answer: nextAgent ? nextAgent.text : null,
+      });
+    } else if (entry.text.length > 4) {
+      interests.push(extractTopicLabel(entry.text));
+    }
+  }
+
+  return { qaPairs, interests };
 }
 
 function clearSuppressAgentOutput() {
@@ -783,9 +855,23 @@ function isWelcomeConfirmation(text) {
 }
 
 function startVirtualTourIntro() {
+  if (pendingVirtualTourFallbackTimer) {
+    clearTimeout(pendingVirtualTourFallbackTimer);
+    pendingVirtualTourFallbackTimer = null;
+  }
+
   const prompt = `Say this sentence exactly in one response, without adding extra text: "${VIRTUAL_TOUR_INTRO_TEXT}"`;
   sendMessage(prompt, { isInternal: true });
   pendingVirtualTourVideo = true;
+
+  // Safety fallback: if streaming events are incomplete, still start the tour video.
+  pendingVirtualTourFallbackTimer = setTimeout(() => {
+    if (!pendingVirtualTourVideo) {
+      return;
+    }
+    pendingVirtualTourVideo = false;
+    playYouTubeVideo(DEFAULT_YOUTUBE_URL);
+  }, 12000);
 }
 
 function handleWelcomeConfirmation(text, fromVoice = false) {
@@ -804,7 +890,10 @@ function handleWelcomeConfirmation(text, fromVoice = false) {
     suppressAgentOutputTemporarily(8000);
     pendingWelcomeScriptAfterTurn = true;
   } else {
-    startVirtualTourIntro();
+    // TEXT PATH: send scripted intro to agent AND directly play video — don't wait for events.
+    const introPrompt = `Say this sentence exactly in one response, without adding extra text: "${VIRTUAL_TOUR_INTRO_TEXT}"`;
+    sendMessage(introPrompt, { isInternal: true });
+    playYouTubeVideo(DEFAULT_YOUTUBE_URL);
   }
 
   return true;
@@ -1001,7 +1090,23 @@ function startYouTubeEndMonitor() {
   }, 1000);
 }
 
-function loadVideoWithYouTubeApi(videoId) {
+function onYouTubePlayerReady(event) {
+  try {
+    if (event && event.target) {
+      if (typeof event.target.mute === "function") {
+        event.target.mute();
+      }
+      if (typeof event.target.playVideo === "function") {
+        event.target.playVideo();
+      }
+    }
+  } catch (error) {
+    console.warn("Unable to autoplay YouTube player:", error);
+  }
+  startYouTubeEndMonitor();
+}
+
+function loadVideoWithYouTubeApi(videoId, startSeconds = null) {
   if (!floatingVideoIframe) {
     return;
   }
@@ -1013,31 +1118,44 @@ function loadVideoWithYouTubeApi(videoId) {
       }
 
       if (!youtubePlayer) {
+        const playerVars = {
+          autoplay: 1,
+          rel: 0,
+          enablejsapi: 1,
+          playsinline: 1,
+          mute: 1,
+          origin: window.location.origin,
+        };
+        if (startSeconds !== null) {
+          playerVars.start = startSeconds;
+        }
         youtubePlayer = new window.YT.Player(floatingVideoIframe.id, {
           videoId,
-          playerVars: {
-            autoplay: 1,
-            rel: 0,
-            enablejsapi: 1,
-            origin: window.location.origin,
-          },
+          playerVars,
           events: {
             onStateChange: onYouTubePlayerStateChange,
-            onReady: startYouTubeEndMonitor,
+            onReady: onYouTubePlayerReady,
           },
         });
-        startYouTubeEndMonitor();
         return;
       }
 
-      youtubePlayer.loadVideoById(videoId);
+      if (startSeconds !== null) {
+        youtubePlayer.loadVideoById({ videoId, startSeconds });
+      } else {
+        youtubePlayer.loadVideoById(videoId);
+      }
+      if (typeof youtubePlayer.mute === "function") {
+        youtubePlayer.mute();
+      }
       youtubePlayer.playVideo();
       startYouTubeEndMonitor();
     })
     .catch((error) => {
       console.warn("YouTube API load failed, falling back to iframe src.", error);
       if (floatingVideoIframe) {
-        floatingVideoIframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1`;
+        const startParam = startSeconds !== null ? `&start=${startSeconds}` : "";
+        floatingVideoIframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1&playsinline=1&mute=1${startParam}`;
       }
     });
 }
@@ -1098,6 +1216,11 @@ function onYouTubeIframeMessage(event) {
 window.addEventListener("message", onYouTubeIframeMessage);
 
 function playYouTubeVideo(videoUrl = DEFAULT_YOUTUBE_URL) {
+  if (pendingVirtualTourFallbackTimer) {
+    clearTimeout(pendingVirtualTourFallbackTimer);
+    pendingVirtualTourFallbackTimer = null;
+  }
+
   const now = Date.now();
   if (now - lastVideoCommandAt < VIDEO_COMMAND_COOLDOWN_MS) {
     return;
@@ -1106,32 +1229,48 @@ function playYouTubeVideo(videoUrl = DEFAULT_YOUTUBE_URL) {
   suppressVideoFallbackUntil = now + VIDEO_FALLBACK_SUPPRESS_MS;
   hasHandledTourEnd = false;
 
-  const videoId = extractYouTubeVideoId(videoUrl);
+  const normalizedVideoUrl = normalizeUrlCandidate(videoUrl);
+  const videoId = extractYouTubeVideoId(normalizedVideoUrl);
   if (!videoId) {
     addSystemMessage("Unable to play video: invalid YouTube link.");
     return;
   }
 
-  currentYouTubeWatchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const timestampSec = extractTimestampFromYouTubeUrl(normalizedVideoUrl);
+  const currentVideoId = extractYouTubeVideoId(currentYouTubeWatchUrl);
+
+  // If the same video is already loaded, seek to the timestamp instead of reloading.
+  if (currentVideoId === videoId && floatingVideoContainer && floatingVideoIframe) {
+    if (timestampSec !== null) {
+      seekYouTubeToTimestamp(timestampSec);
+      currentYouTubeWatchUrl = `https://www.youtube.com/watch?v=${videoId}&t=${timestampSec}s`;
+    }
+    if (floatingVideoResumeHint) {
+      floatingVideoResumeHint.classList.add("hidden");
+    }
+    return;
+  }
+
+  currentYouTubeWatchUrl = timestampSec !== null
+    ? `https://www.youtube.com/watch?v=${videoId}&t=${timestampSec}s`
+    : `https://www.youtube.com/watch?v=${videoId}`;
+
   ensureFloatingVideoPlayer();
 
   if (!floatingVideoContainer || !floatingVideoIframe) {
     return;
   }
 
-  // Always set iframe src first so playback still works even if YT API lifecycle is delayed.
-  floatingVideoIframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1&playsinline=1`;
+  const startParam = timestampSec !== null ? `&start=${timestampSec}` : "";
+  floatingVideoIframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1&playsinline=1&mute=1${startParam}`;
 
-  loadVideoWithYouTubeApi(videoId);
+  loadVideoWithYouTubeApi(videoId, timestampSec);
+
   // Secondary nudge for browsers that defer autoplay until player is ready.
   setTimeout(() => {
     if (floatingVideoIframe && floatingVideoIframe.contentWindow) {
       floatingVideoIframe.contentWindow.postMessage(
-        JSON.stringify({
-          event: "command",
-          func: "playVideo",
-          args: []
-        }),
+        JSON.stringify({ event: "command", func: "playVideo", args: [] }),
         "*"
       );
     }
@@ -1487,32 +1626,6 @@ function createMessageBubble(text, isUser, isPartial = false) {
   return messageDiv;
 }
 
-// Create an image message bubble element
-function createImageBubble(imageDataUrl, isUser) {
-  const messageDiv = document.createElement("div");
-  messageDiv.className = `message ${isUser ? "user" : "agent"}`;
-
-  const avatarDiv = createProfileIcon(isUser);
-  const bubbleDiv = document.createElement("div");
-  bubbleDiv.className = "bubble image-bubble";
-
-  const img = document.createElement("img");
-  img.src = imageDataUrl;
-  img.className = "bubble-image";
-  img.alt = "Captured image";
-
-  bubbleDiv.appendChild(img);
-  if (isUser) {
-    messageDiv.appendChild(bubbleDiv);
-    messageDiv.appendChild(avatarDiv);
-  } else {
-    messageDiv.appendChild(avatarDiv);
-    messageDiv.appendChild(bubbleDiv);
-  }
-
-  return messageDiv;
-}
-
 // Update existing message bubble text
 function updateMessageBubble(element, text, isPartial = false) {
   const textElement = element.querySelector(".bubble-text");
@@ -1585,6 +1698,92 @@ function showEndConversationSummary() {
   if (summaryDuration) {
     summaryDuration.textContent = formatDurationLabel(durationMs);
   }
+
+  // Populate interests and questions from conversation log
+  const { qaPairs, interests } = generateConversationSummary();
+
+  const summaryInterestsList = document.getElementById("summaryInterestsList");
+  if (summaryInterestsList) {
+    summaryInterestsList.innerHTML = "";
+    if (interests.length > 0) {
+      interests.forEach(item => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        summaryInterestsList.appendChild(li);
+      });
+    } else {
+      summaryInterestsList.innerHTML = "<li class='summary-empty'>No specific topics recorded.</li>";
+    }
+  }
+
+  const summaryQuestionsList = document.getElementById("summaryQuestionsList");
+  if (summaryQuestionsList) {
+    summaryQuestionsList.innerHTML = "";
+    if (qaPairs.length > 0) {
+      qaPairs.forEach(({ question, answer }) => {
+        const li = document.createElement("li");
+        li.className = "summary-qa-item";
+
+        const qDiv = document.createElement("div");
+        qDiv.className = "summary-qa-question";
+        qDiv.textContent = question;
+
+        li.appendChild(qDiv);
+
+        if (answer) {
+          const aDiv = document.createElement("div");
+          aDiv.className = "summary-qa-answer";
+          const truncated = answer.length > 220 ? answer.slice(0, 220).trimEnd() + "…" : answer;
+          aDiv.textContent = truncated;
+          li.appendChild(aDiv);
+        }
+
+        summaryQuestionsList.appendChild(li);
+      });
+    } else {
+      summaryQuestionsList.innerHTML = "<li class='summary-empty'>No questions recorded.</li>";
+    }
+  }
+
+  // Wire up share button — sends directly to Star Learners team WhatsApp
+  const shareBtn = document.getElementById("summaryShareButton");
+  if (shareBtn) {
+    shareBtn.onclick = () => {
+      const name = userInfo?.fullName || "a visitor";
+      const topicsText = interests.length > 0
+        ? interests.map(t => `  • ${t}`).join("\n")
+        : "  • General virtual tour";
+      const qaText = qaPairs.length > 0
+        ? qaPairs.map(({ question, answer }) => {
+            const a = answer ? `\n    ↳ ${answer.slice(0, 160).trimEnd()}${answer.length > 160 ? "…" : ""}` : "";
+            return `  • ${question}${a}`;
+          }).join("\n")
+        : "  • None";
+      const msg = [
+        `👋 Hi! I'm ${name} and I just completed a virtual tour with STELLA at Star Learners.`,
+        "",
+        `📧 ${userInfo?.emailAddress || ""}`,
+        "",
+        "📌 Topics I explored:",
+        topicsText,
+        "",
+        "❓ My questions:",
+        qaText,
+        "",
+        "I'd love to learn more — please get in touch!",
+      ].join("\n");
+      window.open(`https://wa.me/${TEAM_WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+    };
+  }
+
+  // Wire up connect button
+  const connectBtn = document.getElementById("summaryConnectButton");
+  if (connectBtn) {
+    connectBtn.onclick = () => {
+      window.open(TEAM_CONNECT_URL, "_blank", "noopener,noreferrer");
+    };
+  }
+
   if (endConversationModal) {
     endConversationModal.classList.add("show");
   }
@@ -1602,15 +1801,10 @@ function stopKeywordRecognizer() {
 }
 
 function stopAudioSession() {
-  is_audio = false;
+  setInputMode("text", true);
   if (audioPlayerNode) {
     audioPlayerNode.port.postMessage({ command: "endOfAudio" });
   }
-  if (micStream) {
-    micStream.getTracks().forEach((track) => track.stop());
-    micStream = null;
-  }
-  stopKeywordRecognizer();
 }
 
 function endConversation() {
@@ -1701,11 +1895,7 @@ function connectWebsocket() {
       url: ws_url
     }, '🔌', 'system');
 
-    // Enable text-send button if text mode UI exists.
-    if (sendButton) {
-      sendButton.disabled = false;
-    }
-    addSubmitHandler();
+    updateSendButtonState();
     requestAgentWelcome();
   };
 
@@ -1866,9 +2056,13 @@ function connectWebsocket() {
       if (pendingWelcomeScriptAfterTurn) {
         pendingWelcomeScriptAfterTurn = false;
         startVirtualTourIntro();
-      } else if (pendingVirtualTourVideo && !hasOutputTranscriptionInTurn) {
-        // Fallback path: if no output transcription stream is available, start video on turn complete.
+      } else if (pendingVirtualTourVideo) {
+        // Fallback path: start video on turn complete even if output transcription stream is partial.
         pendingVirtualTourVideo = false;
+        if (pendingVirtualTourFallbackTimer) {
+          clearTimeout(pendingVirtualTourFallbackTimer);
+          pendingVirtualTourFallbackTimer = null;
+        }
         playYouTubeVideo(DEFAULT_YOUTUBE_URL);
       } else if (pendingRegistrationLinkAfterTurn) {
         pendingRegistrationLinkAfterTurn = false;
@@ -1940,6 +2134,7 @@ function connectWebsocket() {
             return;
           }
           handleWelcomeConfirmation(transcriptionText, true);
+          logConversationMessage("user", transcriptionText);
 
           if (postTourFollowupActive && isNoOrSatisfied(transcriptionText)) {
             suppressAgentOutputTemporarily(5000);
@@ -1949,6 +2144,9 @@ function connectWebsocket() {
             }
             return;
           }
+
+          // Query Qdrant in the background to seek video to the relevant timestamp.
+          searchQdrantAndSeekVideo(transcriptionText);
         }
 
         if (!isEnglishOnlyInput(transcriptionText)) {
@@ -2067,8 +2265,13 @@ function connectWebsocket() {
 
         // If transcription is finished, reset the state
         if (isFinished) {
+          logConversationMessage("agent", transcriptionText);
           if (pendingVirtualTourVideo) {
             pendingVirtualTourVideo = false;
+            if (pendingVirtualTourFallbackTimer) {
+              clearTimeout(pendingVirtualTourFallbackTimer);
+              pendingVirtualTourFallbackTimer = null;
+            }
             playYouTubeVideo(DEFAULT_YOUTUBE_URL);
           }
           currentOutputTranscriptionId = null;
@@ -2128,7 +2331,11 @@ function connectWebsocket() {
 
           const youtubeUrlInText = extractFirstYouTubeUrl(part.text);
           if (youtubeUrlInText) {
-            playYouTubeVideo(youtubeUrlInText);
+            const urlTimestamp = extractTimestampFromYouTubeUrl(youtubeUrlInText);
+            // Only auto-play from agent text if: no timestamp (fresh load), or tour already active
+            if (urlTimestamp === null || hasTriggeredVirtualTourIntro) {
+              playYouTubeVideo(youtubeUrlInText);
+            }
           }
 
           // Skip thinking/reasoning text from chat bubbles (shown in event console)
@@ -2167,9 +2374,7 @@ function connectWebsocket() {
   websocket.onclose = function () {
     console.log("WebSocket connection closed.");
     updateConnectionStatus(false);
-    if (sendButton) {
-      sendButton.disabled = true;
-    }
+    updateSendButtonState();
     if (hasEndedConversation || isEndingConversation) {
       addSystemMessage("Conversation ended.");
       showEndConversationSummary();
@@ -2211,88 +2416,6 @@ function connectWebsocket() {
   };
 }
 
-// ---------------------------------------------------------------
-// URL upload handling
-// ---------------------------------------------------------------
-
-if (uploadForm) {
-  uploadForm.addEventListener("submit", async (evt) => {
-    evt.preventDefault();
-    const url = uploadUrlInput.value.trim();
-    if (!url) return;
-    uploadStatus.textContent = "Uploading...";
-    try {
-      const resp = await fetch("/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const data = await resp.json();
-      if (resp.ok && data.status) {
-        uploadStatus.textContent = "Added";
-        addSystemMessage(`URL added: ${url}`);
-      } else {
-        uploadStatus.textContent = "Error";
-        addSystemMessage(`Upload failed: ${data.error || JSON.stringify(data)}`);
-      }
-    } catch (e) {
-      uploadStatus.textContent = "Error";
-      addSystemMessage(`Upload exception: ${e}`);
-    }
-    setTimeout(() => (uploadStatus.textContent = ""), 3000);
-    uploadUrlInput.value = "";
-  });
-}
-
-// connectWebsocket() is now called after user submits the info form
-// Previously: connectWebsocket();
-
-// Add submit handler to the form
-function addSubmitHandler() {
-  if (!messageForm || !messageInput) {
-    return;
-  }
-
-  messageForm.onsubmit = function (e) {
-    e.preventDefault();
-    const message = messageInput.value.trim();
-    if (message) {
-      if (!isEnglishOnlyInput(message)) {
-        notifyEnglishOnlyOnce();
-        return false;
-      }
-
-      if (isResumeVideoCommand(message)) {
-        // Local video-control command; do not forward to the model.
-        resumeYouTubeVideo();
-        messageInput.value = "";
-        return false;
-      }
-
-      // Add user message bubble
-      const userBubble = createMessageBubble(message, true, false);
-      messagesDiv.appendChild(userBubble);
-      scrollToBottom();
-
-      // Clear input
-      messageInput.value = "";
-
-      if (handleWelcomeConfirmation(message, false)) {
-        return false;
-      }
-
-      if (postTourFollowupActive && isNoOrSatisfied(message)) {
-        showRegistrationLinkPrompt();
-        return false;
-      }
-
-      // Send message to server
-      sendMessage(message);
-      console.log("[CLIENT TO AGENT] " + message);
-    }
-    return false;
-  };
-}
 
 // Send a message to the server as JSON
 function sendMessage(message, options = {}) {
@@ -2320,6 +2443,83 @@ function sendMessage(message, options = {}) {
   }
 }
 
+// Text input handling
+const textInput = document.getElementById("textInput");
+const sendTextButton = document.getElementById("sendTextButton");
+const DEFAULT_TEXT_INPUT_PLACEHOLDER = "Ask anything";
+const VOICE_TEXT_INPUT_PLACEHOLDER = "Voice mode active. Speak to Stella...";
+let inputMode = "text";
+
+function updateSendButtonState() {
+  if (sendTextButton && textInput) {
+    const hasText = !!textInput.value.trim();
+    const wsReady = !!(websocket && websocket.readyState === WebSocket.OPEN);
+    sendTextButton.disabled = !(hasText && wsReady);
+  }
+}
+
+function submitTextMessage() {
+  if (!textInput) return;
+  if (inputMode === "voice" || textInput.disabled) return;
+  const text = textInput.value.trim();
+  if (!text) return;
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+
+  // Show user bubble immediately
+  const bubble = createMessageBubble(text, true, false);
+  messagesDiv.appendChild(bubble);
+  scrollToBottom();
+
+  // Handle resume video command without forwarding to agent.
+  if (isResumeVideoCommand(text)) {
+    resumeYouTubeVideo();
+    suppressAgentOutputTemporarily(3000);
+    textInput.value = "";
+    textInput.style.height = "auto";
+    updateSendButtonState();
+    return;
+  }
+
+  // Handle welcome confirmation — starts virtual tour intro, do NOT also forward raw message.
+  if (handleWelcomeConfirmation(text, false)) {
+    textInput.value = "";
+    textInput.style.height = "auto";
+    updateSendButtonState();
+    return;
+  }
+
+  // Send to agent
+  sendMessage(text);
+  logConversationMessage("user", text);
+
+  // Seek video silently in background based on Qdrant results.
+  searchQdrantAndSeekVideo(text);
+
+  textInput.value = "";
+  textInput.style.height = "auto";
+  updateSendButtonState();
+}
+
+if (sendTextButton) {
+  sendTextButton.addEventListener("click", submitTextMessage);
+}
+
+if (textInput) {
+  textInput.addEventListener("input", () => {
+    // Auto-resize
+    textInput.style.height = "auto";
+    textInput.style.height = Math.min(textInput.scrollHeight, 120) + "px";
+    updateSendButtonState();
+  });
+
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitTextMessage();
+    }
+  });
+}
+
 // Decode Base64 data to Array
 // Handles both standard base64 and base64url encoding
 function base64ToArray(base64) {
@@ -2341,158 +2541,7 @@ function base64ToArray(base64) {
   return bytes.buffer;
 }
 
-/**
- * Camera handling (optional)
- * The markup may omit the camera button/modal; guard accordingly
- */
 
-const cameraButton = document.getElementById("cameraButton");
-const cameraModal = document.getElementById("cameraModal");
-const cameraPreview = document.getElementById("cameraPreview");
-const closeCameraModal = document.getElementById("closeCameraModal");
-const cancelCamera = document.getElementById("cancelCamera");
-const captureImageBtn = document.getElementById("captureImage");
-
-let cameraStream = null;
-
-// Open camera modal and start preview
-async function openCameraPreview() {
-  try {
-    // Request access to the user's webcam
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        width: { ideal: 768 },
-        height: { ideal: 768 },
-        facingMode: 'user'
-      }
-    });
-
-    // Set the stream to the video element
-    cameraPreview.srcObject = cameraStream;
-
-    // Show the modal
-    cameraModal.classList.add('show');
-
-  } catch (error) {
-    console.error('Error accessing camera:', error);
-    addSystemMessage(`Failed to access camera: ${error.message}`);
-
-    // Log to console
-    addConsoleEntry('error', 'Camera access failed', {
-      error: error.message,
-      name: error.name
-    }, '⚠️', 'system');
-  }
-}
-
-// Close camera modal and stop preview
-function closeCameraPreview() {
-  // Stop the camera stream
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-
-  // Clear the video source
-  cameraPreview.srcObject = null;
-
-  // Hide the modal
-  cameraModal.classList.remove('show');
-}
-
-// Capture image from the live preview
-function captureImageFromPreview() {
-  if (!cameraStream) {
-    addSystemMessage('No camera stream available');
-    return;
-  }
-
-  try {
-    // Create canvas to capture the frame
-    const canvas = document.createElement('canvas');
-    canvas.width = cameraPreview.videoWidth;
-    canvas.height = cameraPreview.videoHeight;
-    const context = canvas.getContext('2d');
-
-    // Draw current video frame to canvas
-    context.drawImage(cameraPreview, 0, 0, canvas.width, canvas.height);
-
-    // Convert canvas to data URL for display
-    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-
-    // Display the captured image in the chat
-    const imageBubble = createImageBubble(imageDataUrl, true);
-    messagesDiv.appendChild(imageBubble);
-    scrollToBottom();
-
-    // Convert canvas to blob for sending to server
-    canvas.toBlob((blob) => {
-      // Convert blob to base64 for sending to server
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64data = reader.result.split(',')[1]; // Remove data:image/jpeg;base64, prefix
-        sendImage(base64data);
-      };
-      reader.readAsDataURL(blob);
-
-      // Log to console
-      addConsoleEntry('outgoing', `Image captured: ${blob.size} bytes (JPEG)`, {
-        size: blob.size,
-        type: 'image/jpeg',
-        dimensions: `${canvas.width}x${canvas.height}`
-      }, '📷', 'user');
-    }, 'image/jpeg', 0.85);
-
-    // Close the camera modal
-    closeCameraPreview();
-
-  } catch (error) {
-    console.error('Error capturing image:', error);
-    addSystemMessage(`Failed to capture image: ${error.message}`);
-
-    // Log to console
-    addConsoleEntry('error', 'Image capture failed', {
-      error: error.message,
-      name: error.name
-    }, '⚠️', 'system');
-  }
-}
-
-// Send image to server
-function sendImage(base64Image) {
-  if (websocket && websocket.readyState === WebSocket.OPEN) {
-    const jsonMessage = JSON.stringify({
-      type: "image",
-      data: base64Image,
-      mimeType: "image/jpeg"
-    });
-    websocket.send(jsonMessage);
-    console.log("[CLIENT TO AGENT] Sent image");
-  }
-}
-
-// Event listeners (only if elements exist)
-if (cameraButton) {
-  cameraButton.addEventListener("click", openCameraPreview);
-}
-if (closeCameraModal) {
-  closeCameraModal.addEventListener("click", closeCameraPreview);
-}
-if (cancelCamera) {
-  cancelCamera.addEventListener("click", closeCameraPreview);
-}
-if (captureImageBtn) {
-  captureImageBtn.addEventListener("click", captureImageFromPreview);
-}
-
-// Close modal when clicking outside of it
-if (cameraModal) {
-  cameraModal.addEventListener("click", (event) => {
-    if (event.target === cameraModal) {
-      closeCameraPreview();
-    }
-  });
-}
 
 /**
  * Audio handling
@@ -2575,24 +2624,104 @@ function startAudio() {
   });
 }
 
-// Start the audio only when the user clicked the button
-// (due to the gesture requirement for the Web Audio API)
-const startAudioButton = document.getElementById("startAudioButton");
-if (startAudioButton) {
-  startAudioButton.addEventListener("click", () => {
-    startAudioButton.disabled = true;
+function stopAudioInputCapture() {
+  if (audioRecorderNode) {
+    try {
+      audioRecorderNode.disconnect();
+    } catch (error) {
+      console.warn("Failed to disconnect audio recorder node:", error);
+    }
+    audioRecorderNode = null;
+  }
+
+  if (micStream) {
+    micStream.getTracks().forEach((track) => track.stop());
+    micStream = null;
+  }
+
+  if (audioRecorderContext) {
+    const contextToClose = audioRecorderContext;
+    audioRecorderContext = null;
+    contextToClose.close().catch((error) => {
+      console.warn("Failed to close audio recorder context:", error);
+    });
+  }
+
+  audioInputInitPromise = null;
+}
+
+function setInputMode(mode, silent = false) {
+  if (mode !== "text" && mode !== "voice") {
+    return;
+  }
+
+  inputMode = mode;
+
+  if (textInput) {
+    textInput.style.height = "auto";
+  }
+
+  if (mode === "voice") {
     startAudio();
     startKeywordRecognizer();
     is_audio = true;
-    addSystemMessage("Audio mode enabled - you can now speak to the agent");
 
-    // Log to console
-    addConsoleEntry('outgoing', 'Audio Mode Enabled', {
-      status: 'Audio worklets started',
-      message: 'Microphone active - audio input will be sent to agent'
-    }, '🎤', 'system');
+    if (startAudioButton) {
+      startAudioButton.classList.add("active");
+      startAudioButton.setAttribute("aria-pressed", "true");
+      startAudioButton.title = "Voice mode is active";
+    }
+    if (textInput) {
+      textInput.value = "";
+      textInput.placeholder = VOICE_TEXT_INPUT_PLACEHOLDER;
+      textInput.classList.add("voice-active");
+      textInput.disabled = true;
+    }
+
+    if (!silent) {
+      addConsoleEntry('outgoing', 'Voice Mode Enabled', {
+        status: 'Microphone active'
+      }, '🎤', 'system');
+    }
+    return;
+  }
+
+  is_audio = false;
+  stopKeywordRecognizer();
+  stopAudioInputCapture();
+
+  if (startAudioButton) {
+    startAudioButton.classList.remove("active");
+    startAudioButton.setAttribute("aria-pressed", "false");
+    startAudioButton.title = "Toggle full voice mode";
+  }
+  if (textInput) {
+    textInput.disabled = false;
+    textInput.placeholder = DEFAULT_TEXT_INPUT_PLACEHOLDER;
+    textInput.classList.remove("voice-active");
+  }
+
+  if (!silent) {
+    addConsoleEntry('outgoing', 'Text Mode Enabled', {
+      status: 'Voice capture stopped'
+    }, '⌨️', 'system');
+  }
+
+  updateSendButtonState();
+}
+
+// Voice button — toggles full voice mode
+const startAudioButton = document.getElementById("startAudioButton");
+if (startAudioButton) {
+  startAudioButton.addEventListener("click", () => {
+    if (inputMode === "voice") {
+      setInputMode("text");
+    } else {
+      setInputMode("voice");
+    }
   });
 }
+setInputMode("text", true);
 
 if (endConversationButton) {
   endConversationButton.addEventListener("click", endConversation);
