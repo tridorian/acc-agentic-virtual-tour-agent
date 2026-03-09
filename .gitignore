@@ -6,6 +6,10 @@
 # Claude
 .claude
 
+# Frames and video files
+data/frames/
+data/videos/
+
 # Python
 __pycache__/
 *.py[cod]
