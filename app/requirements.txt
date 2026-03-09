@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+requests
+google-adk
+google-genai
+google-cloud-aiplatform
+qdrant-client
+qdrant-client

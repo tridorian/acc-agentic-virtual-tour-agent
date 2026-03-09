@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ADK Gemini Live API Toolkit Demo</title>
+    <title>Star Learners AI</title>
     <link rel="icon" type="image/jpeg" href="https://scontent.fkul8-4.fna.fbcdn.net/v/t39.30808-6/409800028_768338051973763_4459650912449556577_n.jpg?_nc_cat=100&ccb=1-7&_nc_sid=1d70fc&_nc_ohc=hKl1gkCFTEgQ7kNvwFsvSc8&_nc_oc=Adn0w4eddRC6_piLZQKZuZQW3vEO4pO9v9HhxipBuFATDHzyalLq6j6W9w5Ok5u_SDf5Qzaw5TRPBSN_DptGAnyJ&_nc_zt=23&_nc_ht=scontent.fkul8-4.fna&_nc_gid=raQhUqA4zn6Mwq-6Qhp6Bg&_nc_ss=8&oh=00_AfwvmNpG-rHvMLEFgLogaHNLKc0d5dKhxou-_GWqM4iZxg&oe=69AD0176">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Readex+Pro:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="/static/js/app.js" type="module"></script>
   </head>
@@ -53,21 +56,9 @@
     </div>
 
     <header>
-      <h1>ADK Gemini Live API Toolkit Demo</h1>
-      <div class="subtitle">Real-time bidirectional streaming with Google ADK</div>
-      <div class="header-options">
-        <label class="header-checkbox" title="Enable model to proactively respond without explicit prompts (Native audio models only)">
-          <input type="checkbox" id="enableProactivity">
-          <span>Proactivity</span>
-        </label>
-        <label class="header-checkbox" title="Enable model to detect and adapt to emotional cues (Native audio models only)">
-          <input type="checkbox" id="enableAffectiveDialog">
-          <span>Affective Dialog</span>
-        </label>
-      </div>
-      <!-- link to the separate knowledge-base management page -->
+      <h1>Star Learners AI</h1>
+      <div class="subtitle">Your guide to Star Learners — ask Stella anything</div>
       <div class="header-manage">
-        <a href="/static/kb.html" class="manage-link">Manage Knowledge Base</a>
         <button type="button" id="openConsoleButton" class="manage-link console-toggle-btn">Event Console</button>
       </div>
       <div class="connection-status">
@@ -88,8 +79,29 @@
 
         <div class="input-container">
           <div class="input-wrapper">
-            <button type="button" id="startAudioButton">Start Interacting</button>
-            <button type="button" id="endConversationButton" disabled>End Conversation</button>
+            <!-- Shown before session starts -->
+            <button type="button" id="startSessionButton" class="btn-start-session">Start Chat with Stella</button>
+            <!-- Shown after session starts -->
+            <div id="chatInputRow" class="chat-input-row hidden">
+              <div class="text-input-wrapper">
+                <div class="input-mode-bar">
+                  <textarea
+                    id="textInput"
+                    class="text-input"
+                    placeholder="Ask anything"
+                    rows="1"
+                    maxlength="1000"
+                  ></textarea>
+                  <button type="button" id="startAudioButton" class="voice-pill-btn" title="Toggle full voice mode" aria-pressed="false">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" aria-hidden="true">
+                      <path d="M6.5 7a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0V8a1 1 0 0 1 1-1zm5-3a1 1 0 0 1 1 1v14a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1zm5 4a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0V9a1 1 0 0 1 1-1z"/>
+                    </svg>
+                    <span>Voice</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button type="button" id="endConversationButton" class="hidden" disabled>End Conversation</button>
           </div>
         </div>
       </div>
