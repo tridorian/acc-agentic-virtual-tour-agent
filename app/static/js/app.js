@@ -409,8 +409,8 @@ async function requestAgentWelcome() {
     console.warn("Audio output not ready for welcome message:", error);
   });
 
-  // const welcomeMessage = `Hi ${userInfo.fullName}, I am STELLA, your personal assistant at Star Learners! 👋  I'm here to walk you through our centre facilities and support you with any information you need. Are you ready to begin?`;
-  const welcomeMessage = `Hi ${userInfo.fullName}, I am STELLA`;
+  const welcomeMessage = `Hi ${userInfo.fullName}, I am STELLA, your personal assistant at Star Learners! 👋  I'm here to walk you through our centre facilities and support you with any information you need. Are you ready to begin?`;
+  // const welcomeMessage = `Hi ${userInfo.fullName}, I am STELLA`;
   const bootstrapPrompt = `Say this greeting exactly in one response, without adding extra text: "${welcomeMessage}"`;
   sendMessage(bootstrapPrompt, { isInternal: true });
   hasRequestedAgentWelcome = true;
