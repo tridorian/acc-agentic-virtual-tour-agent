@@ -6,4 +6,4 @@ requests
 google-adk
 google-genai
 google-cloud-aiplatform
-qdrant-client>=1.9.0
+weaviate-client>=4.0

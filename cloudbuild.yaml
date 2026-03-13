@@ -1,0 +1,35 @@
+substitutions:
+  _TAG: latest
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - gcr.io/$PROJECT_ID/star-learners-bidi-agent:$_TAG
+      - ./app
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - gcr.io/$PROJECT_ID/star-learners-bidi-agent:$_TAG
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - star-learners-bidi-agent
+      - --image=gcr.io/$PROJECT_ID/star-learners-bidi-agent:$_TAG
+      - --region=us-central1
+      - --platform=managed
+      - --network=weaviate-vpc
+      - --subnet=weaviate-private-subnet
+      - --vpc-egress=all-traffic
+      - --no-allow-unauthenticated
+      - --port=8080
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_USE_VERTEXAI=true,GCP_PROJECT=$PROJECT_ID,GCP_LOCATION=us-central1,WEAVIATE_ENDPOINT=http://10.10.0.3:8080,WEAVIATE_GRPC_PORT=50051,WEAVIATE_COLLECTION_WEBSITE=StarLearnersWebsite,WEAVIATE_COLLECTION_FRAME=StarLearnersFrame,GEMINI_TEXT_EMBED_MODEL=gemini-embedding-001,GEMINI_IMAGE_EMBED_MODEL=multimodalembedding@001
+      - --update-secrets=WEAVIATE_API_KEY=WEAVIATE_API_KEY:latest
+
+images:
+  - gcr.io/$PROJECT_ID/star-learners-bidi-agent:$_TAG

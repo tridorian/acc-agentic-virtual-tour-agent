@@ -670,7 +670,7 @@ function seekYouTubeToTimestamp(timestampSec) {
 
 async function searchQdrantAndSeekVideo(query) {
   try {
-    const response = await fetch("/api/qdrant-search", {
+    const response = await fetch("/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),

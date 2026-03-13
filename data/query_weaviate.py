@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query Qdrant for website and YouTube timestamp retrieval."""
+"""Query Weaviate for website and YouTube timestamp retrieval."""
 
 from __future__ import annotations
 
@@ -8,35 +8,37 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import vertexai
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qmodels
 from vertexai.vision_models import MultiModalEmbeddingModel
 
-DEFAULT_COLLECTION = "star_learners_kb"
 DEFAULT_TEXT_EMBED_MODEL = "gemini-embedding-001"
 DEFAULT_IMAGE_EMBED_MODEL = "gemini-embedding-001"
 DEFAULT_CAPTION_MODEL = "gemini-2.0-flash"
 # Keywords that suggest the user wants to see the virtual tour video.
-# Deliberately excludes "see" (too common in general English to be a reliable signal).
 TOUR_HINT_KEYWORDS = frozenset({"tour", "demo", "show", "watch", "video", "playback", "footage"})
 
 # Boost applied to YouTube frame scores when the query has tour intent.
-# Cosine similarity scores range [-1.0, 1.0]; 0.1 gives a moderate rank nudge
-# without completely overriding semantic relevance.
 _TOUR_INTENT_SCORE_BOOST = 0.1
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Query Star Learners Qdrant index")
+    parser = argparse.ArgumentParser(description="Query Star Learners Weaviate index")
     parser.add_argument("--query", required=True)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--source-type", choices=["youtube", "website"], default=None)
-    parser.add_argument("--collection", default=os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION))
+    parser.add_argument(
+        "--website-collection",
+        default=os.getenv("WEAVIATE_COLLECTION_WEBSITE", "StarLearnersWebsite"),
+    )
+    parser.add_argument(
+        "--frame-collection",
+        default=os.getenv("WEAVIATE_COLLECTION_FRAME", "StarLearnersFrame"),
+    )
     return parser.parse_args()
 
 
@@ -55,17 +57,18 @@ def to_youtube_deeplink(video_id: Optional[str], timestamp_sec: Optional[int]) -
 
 class GeminiQuery:
     def __init__(self) -> None:
-        api_key = require_env("GOOGLE_API_KEY")
-        self.client = genai.Client(api_key=api_key)
+        gcp_project = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        gcp_location = os.getenv("GCP_LOCATION", "us-central1")
+        if not gcp_project:
+            raise RuntimeError("Missing GCP_PROJECT / GOOGLE_CLOUD_PROJECT env var")
+        vertexai.init(project=gcp_project, location=gcp_location)
+        self.client = genai.Client(vertexai=True, project=gcp_project, location=gcp_location)
         self.text_embed_model = os.getenv("GEMINI_TEXT_EMBED_MODEL", DEFAULT_TEXT_EMBED_MODEL)
         self.image_embed_model = os.getenv("GEMINI_IMAGE_EMBED_MODEL", DEFAULT_IMAGE_EMBED_MODEL)
         self.caption_model = os.getenv("GEMINI_CAPTION_MODEL", DEFAULT_CAPTION_MODEL)
 
         self._vertex_image_model: Optional[MultiModalEmbeddingModel] = None
         if "multimodalembedding" in self.image_embed_model:
-            gcp_project = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-            gcp_location = os.getenv("GCP_LOCATION", "us-central1")
-            vertexai.init(project=gcp_project, location=gcp_location)
             self._vertex_image_model = MultiModalEmbeddingModel.from_pretrained(self.image_embed_model)
 
     @staticmethod
@@ -109,10 +112,8 @@ class GeminiQuery:
     def embed_for_image_search(self, query: str) -> Optional[List[float]]:
         try:
             if self._vertex_image_model is not None:
-                # multimodalembedding@001 can embed text queries directly into 1408-dim space
                 result = self._vertex_image_model.get_embeddings(contextual_text=query)
                 return list(result.text_embedding)
-            # Fallback: text-only model — embed a visual bridge description
             bridge = self.build_visual_bridge_query(query)
             response = self.client.models.embed_content(
                 model=self.image_embed_model,
@@ -124,45 +125,52 @@ class GeminiQuery:
             return None
 
 
-def qdrant_client() -> QdrantClient:
-    return QdrantClient(url=require_env("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
+def weaviate_client():
+    import weaviate
+    
+    from weaviate.connect import ConnectionParams
 
+    endpoint = require_env("WEAVIATE_ENDPOINT")
+    api_key = os.getenv("WEAVIATE_API_KEY")
+    grpc_port = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
 
-def source_filter(source_type: Optional[str]) -> Optional[qmodels.Filter]:
-    if source_type == "youtube":
-        value = "youtube_frame"
-    elif source_type == "website":
-        value = "website_chunk"
-    else:
-        return None
+    parsed = urlparse(endpoint)
+    http_host = parsed.hostname or "localhost"
+    http_port = parsed.port or (443 if parsed.scheme == "https" else 8080)
+    secure = parsed.scheme == "https"
 
-    return qmodels.Filter(
-        must=[
-            qmodels.FieldCondition(
-                key="source_type",
-                match=qmodels.MatchValue(value=value),
-            )
-        ]
+    auth = weaviate.auth.AuthApiKey(api_key) if api_key else None
+
+    client = weaviate.WeaviateClient(
+        connection_params=ConnectionParams.from_params(
+            http_host=http_host,
+            http_port=http_port,
+            http_secure=secure,
+            grpc_host=http_host,
+            grpc_port=grpc_port,
+            grpc_secure=secure,
+        ),
+        auth_client_secret=auth,
     )
+    client.connect()
+    return client
 
 
-def search_points(
-    client: QdrantClient,
-    collection: str,
-    vector_name: str,
+def search_collection(
+    client,
+    collection_name: str,
     vector: List[float],
     limit: int,
-    query_filter: Optional[qmodels.Filter],
 ) -> List[Any]:
-    response = client.query_points(
-        collection_name=collection,
-        query=vector,
-        using=vector_name,
+    from weaviate.classes.query import MetadataQuery
+
+    collection = client.collections.get(collection_name)
+    result = collection.query.near_vector(
+        near_vector=vector,
         limit=limit,
-        query_filter=query_filter,
-        with_payload=True,
+        return_metadata=MetadataQuery(distance=True),
     )
-    return response.points
+    return result.objects
 
 
 def has_tour_intent(query: str) -> bool:
@@ -170,20 +178,22 @@ def has_tour_intent(query: str) -> bool:
     return any(keyword in q for keyword in TOUR_HINT_KEYWORDS)
 
 
-def format_result(hit: Any, source: str) -> Dict[str, Any]:
-    payload = dict(hit.payload or {})
-    content = payload.get("content") or ""
-    video_id = payload.get("video_id")
-    timestamp_sec = payload.get("timestamp_sec")
+def format_result(obj: Any, source: str) -> Dict[str, Any]:
+    props = obj.properties
+    content = props.get("content") or ""
+    video_id = props.get("video_id")
+    timestamp_sec = props.get("timestamp_sec")
+    distance = obj.metadata.distance
+    score = (1.0 - distance) if distance is not None else 0.0
 
     return {
-        "score": float(hit.score),
+        "score": float(score),
         "source_type": source,
         "content_preview": content[:240],
-        "url": payload.get("source_url"),
+        "url": props.get("source_url"),
         "video_id": video_id,
         "timestamp_sec": timestamp_sec,
-        "timestamp_hms": payload.get("timestamp_hms"),
+        "timestamp_hms": props.get("timestamp_hms"),
         "youtube_deeplink": to_youtube_deeplink(video_id, timestamp_sec),
     }
 
@@ -193,35 +203,33 @@ def main() -> None:
     args = parse_args()
 
     gemini = GeminiQuery()
-    client = qdrant_client()
-    query_filter = source_filter(args.source_type)
+    client = weaviate_client()
 
     results: List[Dict[str, Any]] = []
 
-    if args.source_type in (None, "website"):
-        text_vec = gemini.embed_text_query(args.query)
-        text_hits = search_points(
-            client=client,
-            collection=args.collection,
-            vector_name="text_vector",
-            vector=text_vec,
-            limit=args.top_k,
-            query_filter=query_filter,
-        )
-        results.extend(format_result(hit, "website_chunk") for hit in text_hits)
-
-    if args.source_type in (None, "youtube"):
-        image_query_vec = gemini.embed_for_image_search(args.query)
-        if image_query_vec is not None:
-            image_hits = search_points(
+    try:
+        if args.source_type in (None, "website"):
+            text_vec = gemini.embed_text_query(args.query)
+            text_hits = search_collection(
                 client=client,
-                collection=args.collection,
-                vector_name="image_vector",
-                vector=image_query_vec,
+                collection_name=args.website_collection,
+                vector=text_vec,
                 limit=args.top_k,
-                query_filter=query_filter,
             )
-            results.extend(format_result(hit, "youtube_frame") for hit in image_hits)
+            results.extend(format_result(hit, "website_chunk") for hit in text_hits)
+
+        if args.source_type in (None, "youtube"):
+            image_query_vec = gemini.embed_for_image_search(args.query)
+            if image_query_vec is not None:
+                image_hits = search_collection(
+                    client=client,
+                    collection_name=args.frame_collection,
+                    vector=image_query_vec,
+                    limit=args.top_k,
+                )
+                results.extend(format_result(hit, "youtube_frame") for hit in image_hits)
+    finally:
+        client.close()
 
     # Prioritize timestamped YouTube hits when intent suggests demo/tour browsing.
     if has_tour_intent(args.query):

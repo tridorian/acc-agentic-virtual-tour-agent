@@ -1,6 +1,6 @@
 google-genai>=1.10.0
 google-cloud-aiplatform>=1.70.0
-qdrant-client>=1.9.0
+weaviate-client>=4.0
 yt-dlp>=2024.11.4
 opencv-python-headless>=4.9.0.80
 beautifulsoup4>=4.12.0

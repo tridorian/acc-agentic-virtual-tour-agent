@@ -1,6 +1,6 @@
 """
 FastAPI application for Star Learners AI.
-Uses Vertex AI (Gemini Live) for the voice agent and Qdrant for knowledge-base retrieval.
+Uses Vertex AI (Gemini Live) for the voice agent and Weaviate for knowledge-base retrieval.
 """
 
 import asyncio
@@ -10,6 +10,9 @@ import logging
 import re
 import warnings
 import os
+from websockets.exceptions import ConnectionClosedOK
+from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -48,7 +51,7 @@ vertexai.init(project=PROJECT_ID, location=LOCATION)
 
 # Import agent AFTER environment setup
 from google_search_agent.agent import agent
-from google_search_agent.qdrant_tool import search_qdrant
+from google_search_agent.weaviate_tool import close_weaviate_client, search_weaviate
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +59,12 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    close_weaviate_client()
+
 
 APP_NAME = "star-learners-bidi"
 
@@ -66,7 +75,7 @@ _ALLOWED_IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", 
 # ========================================
 # Phase 1: Application Setup
 # ========================================
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 static_dir = Path(__file__).parent / "static"
 if not static_dir.exists():
@@ -85,23 +94,26 @@ async def root():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
-class QdrantSearchRequest(BaseModel):
+class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(default=3, ge=1, le=20)
 
 
-@app.post("/api/qdrant-search")
-async def qdrant_search_endpoint(payload: QdrantSearchRequest):
-    """Search Qdrant for website content and YouTube video frames.
+@app.post("/api/search")
+async def search_endpoint(payload: SearchRequest):
+    """Search Weaviate for website content and YouTube video frames.
 
     Returns structured results with text_results and video_results (including YouTube timestamps).
     """
     try:
-        results = search_qdrant(payload.query.strip(), top_k=payload.top_k)
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None, partial(search_weaviate, payload.query.strip(), payload.top_k)
+        )
         return results
-    except Exception as e:
-        logger.error("Qdrant search error", exc_info=True)
-        raise HTTPException(status_code=500, detail="Qdrant search failed")
+    except Exception:
+        logger.error("Weaviate search error", exc_info=True)
+        raise HTTPException(status_code=500, detail="Search failed")
 
 
 # ========================================
@@ -192,8 +204,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
             ):
                 # Send raw ADK event as JSON string
                 await websocket.send_text(event.model_dump_json(exclude_none=True, by_alias=True))
+        except ConnectionClosedOK:
+            # Normal session termination — browser disconnected cleanly
+            pass
         except Exception as e:
-            logger.error("Downstream Error: %s", e, exc_info=True)
+            # APIError code 1000 = Gemini Live session cancelled (normal timeout/end)
+            from google.genai.errors import APIError
+            if isinstance(e, APIError) and e.status_code == 1000:
+                logger.info("Gemini Live session ended (cancelled by server)")
+            else:
+                logger.error("Downstream Error: %s", e, exc_info=True)
         finally:
             # Close the WebSocket so the frontend reconnects if the live session dies
             try:

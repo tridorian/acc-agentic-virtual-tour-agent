@@ -1,7 +1,7 @@
 import os
 from google.adk.agents import Agent
 
-from .qdrant_tool import search_knowledge_base
+from .weaviate_tool import search_knowledge_base
 
 agent = Agent(
     name="star_learners_assistant",
