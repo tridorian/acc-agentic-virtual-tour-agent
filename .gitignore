@@ -13,6 +13,7 @@ data/.env
 # Frames and video files
 data/frames/
 data/videos/
+videos/*
 
 # Python
 __pycache__/
