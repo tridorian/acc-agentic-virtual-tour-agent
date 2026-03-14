@@ -7,15 +7,16 @@ An AI-powered voice assistant for Star Learners childcare centre, built with Goo
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Prerequisites](#prerequisites)
-3. [Project Structure](#project-structure)
-4. [Step 1 — Weaviate Setup (GKE Port-Forward)](#step-1--weaviate-setup-gke-port-forward)
-5. [Step 2 — Data Pipeline (Build Knowledge Base)](#step-2--data-pipeline-build-knowledge-base)
-6. [Step 3 — Application Setup](#step-3--application-setup)
-7. [Running the Application](#running-the-application)
-8. [Cloud Run Deployment](#cloud-run-deployment)
-9. [Environment Variables Reference](#environment-variables-reference)
-10. [Querying the Knowledge Base Directly](#querying-the-knowledge-base-directly)
+2. [Reranking Pipeline](#reranking-pipeline)
+3. [Prerequisites](#prerequisites)
+4. [Project Structure](#project-structure)
+5. [Step 1 — Weaviate Setup (GKE Port-Forward)](#step-1--weaviate-setup-gke-port-forward)
+6. [Step 2 — Data Pipeline (Build Knowledge Base)](#step-2--data-pipeline-build-knowledge-base)
+7. [Step 3 — Application Setup](#step-3--application-setup)
+8. [Running the Application](#running-the-application)
+9. [Cloud Run Deployment](#cloud-run-deployment)
+10. [Environment Variables Reference](#environment-variables-reference)
+11. [Querying the Knowledge Base Directly](#querying-the-knowledge-base-directly)
 
 ---
 
@@ -29,13 +30,23 @@ FastAPI Server (app/main.py)
   ├── WebSocket  ──► Google ADK Agent (Stella)
   │                       └── search_knowledge_base()
   │                                  │
-  │                                  ▼
-  │                       Weaviate Vector DB (GKE)
-  │                    ┌────────────────────────────┐
-  │                    │  StarLearnersKB             │
-  │                    │  source_type=website        │
-  │                    │  source_type=youtube_frame  │
-  │                    └────────────────────────────┘
+  │                          search_weaviate()
+  │                        ┌─────────┴──────────┐
+  │                        ▼                    ▼
+  │              Weaviate (website)    Weaviate (video frames)
+  │                        │                    │
+  │                  _rerank_results()   _rerank_results()
+  │                  (per-source)        (per-source)
+  │                        └─────────┬──────────┘
+  │                     cross-source gate
+  │                  (drop weaker source if
+  │                   best score < threshold)
+  │                                  │
+  │                    ┌─────────────────────────┐
+  │                    │  StarLearnersKB (GKE)    │
+  │                    │  source_type=website     │
+  │                    │  source_type=youtube_frame│
+  │                    └─────────────────────────┘
   │
   └── REST API  ──► /api/search
 ```
@@ -46,10 +57,33 @@ FastAPI Server (app/main.py)
 |---|---|
 | Voice AI | Gemini Live 2.5 Flash (native audio) via Google ADK |
 | Embeddings | `gemini-embedding-2-preview` (text + images, 3072-dim) |
+| Reranking | Google Discovery Engine `semantic-ranker-fast-004` |
 | Frame captioning | `gemini-2.5-flash` |
 | Vector database | Weaviate on GKE (`weaviate-cluster`, `us-central1`) |
 | Backend | FastAPI + Python |
 | Frontend | Vanilla JS + WebSocket |
+
+---
+
+## Reranking Pipeline
+
+After the initial vector search, results go through a two-stage relevance filter before being returned to the agent.
+
+**Stage 1 — Per-source reranking** (`_rerank_results`):
+Each source (website text, video frames) is independently scored by [Google Discovery Engine `semantic-ranker-fast-004`](https://cloud.google.com/generative-ai-app-builder/docs/ranking). Chunks scoring below `0.5` are dropped. If *all* chunks score below the threshold, the single highest-scoring chunk is kept as a fallback (so the agent always has at least one result to reason from).
+
+**Stage 2 — Cross-source relevance gate** (in `search_weaviate`):
+After per-source filtering, the best scores from each source are compared. If one source's top score is below `0.5` **and** the other source scored higher, the weaker source is dropped entirely. This prevents the frontend from jumping to an unrelated video timestamp when only the text source has a confident match (and vice versa).
+
+```
+vector search results
+  ├── website chunks  ──► rerank → drop < 0.5 (keep ≥1 fallback)
+  └── video frames   ──► rerank → drop < 0.5 (keep ≥1 fallback)
+                                  │
+                         cross-source gate
+                         if video_best < 0.5 and text_best ≥ video_best → drop video
+                         if text_best  < 0.5 and video_best > text_best  → drop text
+```
 
 ---
 
