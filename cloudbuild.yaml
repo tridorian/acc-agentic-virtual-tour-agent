@@ -28,7 +28,7 @@ steps:
       - --vpc-egress=all-traffic
       - --no-allow-unauthenticated
       - --port=8080
-      - --set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_USE_VERTEXAI=true,GCP_PROJECT=$PROJECT_ID,GCP_LOCATION=us-central1,WEAVIATE_ENDPOINT=http://10.10.0.3:8080,WEAVIATE_GRPC_PORT=50051,WEAVIATE_COLLECTION_WEBSITE=StarLearnersWebsite,WEAVIATE_COLLECTION_FRAME=StarLearnersFrame,GEMINI_TEXT_EMBED_MODEL=gemini-embedding-001,GEMINI_IMAGE_EMBED_MODEL=multimodalembedding@001
+      - --set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GOOGLE_GENAI_USE_VERTEXAI=true,GCP_PROJECT=$PROJECT_ID,GCP_LOCATION=us-central1,WEAVIATE_ENDPOINT=http://weaviate.weaviate.internal:8080,WEAVIATE_GRPC_PORT=50051,WEAVIATE_COLLECTION=StarLearnersKB,GEMINI_EMBED_MODEL=gemini-embedding-2-preview,DEMO_AGENT_MODEL=gemini-live-2.5-flash-native-audio
       - --update-secrets=WEAVIATE_API_KEY=WEAVIATE_API_KEY:latest
 
 images:

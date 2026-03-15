@@ -64,39 +64,54 @@ def _get_genai_client():
 
 
 def _get_weaviate_client():
-    """Return a lazy singleton Weaviate v4 client."""
+    """Return a lazy singleton Weaviate v4 client, reconnecting if stale."""
     global _weaviate_client
-    if _weaviate_client is None:
-        with _weaviate_lock:
-            if _weaviate_client is None:
-                import weaviate
-                from weaviate.connect import ConnectionParams
+    with _weaviate_lock:
+        # Reset stale singleton so we don't serve a disconnected client.
+        if _weaviate_client is not None and not _weaviate_client.is_connected():
+            logger.warning("Weaviate client lost connection, resetting singleton")
+            try:
+                _weaviate_client.close()
+            except Exception:
+                pass
+            _weaviate_client = None
 
-                endpoint = os.getenv("WEAVIATE_ENDPOINT", "http://localhost:8080")
-                api_key = os.getenv("WEAVIATE_API_KEY")
-                grpc_port = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
+        if _weaviate_client is None:
+            import weaviate
+            from weaviate.connect import ConnectionParams
 
-                parsed = urlparse(endpoint)
-                http_host = parsed.hostname or "localhost"
-                http_port = parsed.port or (443 if parsed.scheme == "https" else 8080)
-                secure = parsed.scheme == "https"
+            endpoint = os.getenv("WEAVIATE_ENDPOINT", "http://localhost:8080")
+            api_key = os.getenv("WEAVIATE_API_KEY")
+            grpc_port = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
 
-                auth = weaviate.auth.AuthApiKey(api_key) if api_key else None
+            parsed = urlparse(endpoint)
+            http_host = parsed.hostname or "localhost"
+            http_port = parsed.port or (443 if parsed.scheme == "https" else 8080)
+            secure = parsed.scheme == "https"
 
-                client = weaviate.WeaviateClient(
-                    connection_params=ConnectionParams.from_params(
-                        http_host=http_host,
-                        http_port=http_port,
-                        http_secure=secure,
-                        grpc_host=http_host,
-                        grpc_port=grpc_port,
-                        grpc_secure=secure,
-                    ),
-                    auth_client_secret=auth,
-                )
+            auth = weaviate.auth.AuthApiKey(api_key) if api_key else None
+
+            client = weaviate.WeaviateClient(
+                connection_params=ConnectionParams.from_params(
+                    http_host=http_host,
+                    http_port=http_port,
+                    http_secure=secure,
+                    grpc_host=http_host,
+                    grpc_port=grpc_port,
+                    grpc_secure=secure,
+                ),
+                auth_client_secret=auth,
+            )
+            try:
                 client.connect()
-                logger.info("Weaviate client connected to %s", endpoint)
-                _weaviate_client = client
+            except Exception:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                raise
+            logger.info("Weaviate client connected to %s", endpoint)
+            _weaviate_client = client
     return _weaviate_client
 
 
