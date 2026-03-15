@@ -265,7 +265,7 @@ GCP_LOCATION=us-central1
 # Gemini Live model
 DEMO_AGENT_MODEL=gemini-live-2.5-flash-native-audio
 
-# Weaviate (use localhost when port-forwarding; use 10.10.0.3:8080 on Cloud Run)
+# Weaviate (use localhost when port-forwarding; Cloud Run uses weaviate.weaviate.internal)
 WEAVIATE_ENDPOINT=http://localhost:8080
 WEAVIATE_GRPC_PORT=50051
 WEAVIATE_API_KEY=<your-weaviate-api-key>
@@ -310,10 +310,17 @@ The app is deployed to Cloud Run inside `weaviate-vpc` so it can reach the Weavi
 
 ### Deploy
 
-Update `WEAVIATE_ENDPOINT` in `cloudbuild.yaml` `--set-env-vars` to the internal LB IP:
+`cloudbuild.yaml` already points to the Cloud DNS private zone — no manual IP update needed:
 
 ```
-WEAVIATE_ENDPOINT=http://10.10.0.3:8080
+WEAVIATE_ENDPOINT=http://weaviate.weaviate.internal:8080
+```
+
+The DNS zone `weaviate-internal` in `weaviate-vpc` resolves this to the ILB IP (`10.10.0.3`). If the ILB is ever recreated with a new IP, update only the DNS A record — no redeploy needed:
+
+```bash
+gcloud dns record-sets update weaviate.weaviate.internal. \
+  --zone=weaviate-internal --type=A --rrdatas=<NEW_IP>
 ```
 
 Then submit the build:
